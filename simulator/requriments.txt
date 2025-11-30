@@ -1,0 +1,4 @@
+psycopg2-binary==2.9.9
+pymongo==4.6.1
+mysql-connector-python==8.2.0
+colorama==0.4.6

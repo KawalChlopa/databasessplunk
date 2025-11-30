@@ -1,0 +1,209 @@
+version: '3.8'
+
+services:
+  splunk:
+    image: splunk/splunk:latest
+    container_name: splunk
+    hostname: splunk
+    environment:
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=Admin123!
+      - SPLUNK_HEC_TOKEN=12345678-1234-1234-1234-123456789012
+    ports:
+      - "8000:8000"
+      - "8088:8088"
+      - "9997:9997"
+      - "8089:8089"
+    volumes:
+      - splunk-etc:/opt/splunk/etc
+      - splunk-var:/opt/splunk/var
+      # - ./configs/splunk:/tmp/defaults
+      # - ./dashboards:/opt/splunk/etc/users/admin/search/local/data/ui/views:ro
+    networks:
+      - siem-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  postgres:
+    build: ./databases/postgres
+    container_name: postgres-db
+    hostname: postgres
+    environment:
+      - POSTGRES_PASSWORD=PostgresPass123!
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=secure_data
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - postgres-logs:/var/log/postgresql
+      - ./databases/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./databases/postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - siem-network
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pg_isready -U postgres"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+
+  mariadb:
+    image: mariadb:11.2
+    container_name: mariadb-db
+    hostname: mariadb
+    environment:
+      - MARIADB_ROOT_PASSWORD=MariadbPass123!
+      - MARIADB_DATABASE=secure_data
+      - MARIADB_USER=dbadmin
+      - MARIADB_PASSWORD=DbAdmin123!
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - mariadb-logs:/var/log/mysql
+      - ./databases/mariadb/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./databases/mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf
+    networks:
+      - siem-network
+    # healthcheck:
+    #   test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    # restart: unless-stopped
+
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb-db
+    hostname: mongodb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=MongoPass123!
+      - MONGO_INITDB_DATABASE=secure_data
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb-data:/data/db
+      - mongodb-logs:/var/log/mongodb
+      - mongodb-audit:/var/log/mongodb/audit.json
+      - ./databases/mongodb/mongod.conf:/etc/mongod.conf:ro     
+      - ./databases/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro  
+    command: ["mongod", "--config", "/etc/mongod.conf"]  
+    networks:
+      - siem-network
+    # healthcheck:
+    #   test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')", "--quiet"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 5
+    # restart: unless-stopped
+
+  forwarder-postgres:
+    image: splunk/universalforwarder:latest
+    container_name: forwarder-postgres
+    hostname: forwarder-postgres
+    environment:
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=Admin123!
+      - SPLUNK_FORWARD_SERVER=splunk:9997
+    volumes:
+      # - ./configs/forwarders/outputs.conf:/opt/splunkforwarder/etc/system/local/outputs.conf:ro
+      # - ./configs/forwarders/postgres/inputs.conf:/opt/splunkforwarder/etc/system/local/inputs.conf:ro
+      - postgres-logs:/var/log/postgresql:ro
+      - forwarder-postgres-etc:/opt/splunkforwarder/etc
+    depends_on:
+      - splunk
+      - postgres
+    networks:
+      - siem-network
+    restart: unless-stopped
+
+  forwarder-mariadb:
+    image: splunk/universalforwarder:latest
+    container_name: forwarder-mariadb
+    hostname: forwarder-mariadb
+    environment:
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=Admin123!
+      - SPLUNK_FORWARD_SERVER=splunk:9997
+    volumes:
+      # - ./configs/forwarders/outputs.conf:/opt/splunkforwarder/etc/system/local/outputs.conf:ro
+      # - ./configs/forwarders/mariadb/inputs.conf:/opt/splunkforwarder/etc/system/local/inputs.conf:ro
+      - mariadb-logs:/var/log/mysql:ro
+      - forwarder-mariadb-etc:/opt/splunkforwarder/etc
+    depends_on:
+      - splunk
+      - mariadb
+    networks:
+      - siem-network
+    restart: unless-stopped
+
+  forwarder-mongodb:
+    image: splunk/universalforwarder:latest
+    container_name: forwarder-mongodb
+    hostname: forwarder-mongodb
+    user: root
+    environment:
+      - SPLUNK_GENERAL_TERMS=--accept-sgt-current-at-splunk-com
+      - SPLUNK_START_ARGS=--accept-license
+      - SPLUNK_PASSWORD=Admin123!
+      - SPLUNK_FORWARD_SERVER=splunk:9997
+    volumes:
+      # - ./configs/forwarders/outputs.conf:/opt/splunkforwarder/etc/system/local/outputs.conf:ro
+      # - ./configs/forwarders/mongodb/inputs.conf:/opt/splunkforwarder/etc/system/local/inputs.conf:ro
+      - mongodb-logs:/var/log/mongodb:ro
+      - mongodb-audit:/var/log/mongodb/audit.json:ro
+      - forwarder-mongodb-etc:/opt/splunkforwarder/etc
+    depends_on:
+      - splunk
+      - mongodb
+    networks:
+      - siem-network
+    restart: unless-stopped
+
+  simulator:
+    build: ./simulator
+    container_name: db-simulator
+    hostname: simulator
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - postgres
+      - mariadb
+      - mongodb
+    networks:
+      - siem-network
+    restart: unless-stopped
+       # Możesz zmienić tryb uruchamiania:
+    # command: python3 simulate_activity.py normal     # tylko normalna aktywność
+    # command: python3 simulate_activity.py attack     # tylko ataki
+    command: python3 simulate_activity.py full       # jeden pełny przebieg
+    # command: python3 simulate_activity.py continuous # ciągła symulacja (domyślne)
+
+networks:
+  siem-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  splunk-etc:
+  splunk-var:
+  postgres-data:
+  postgres-logs:
+  mariadb-data:
+  mariadb-logs:
+  mongodb-data: 
+  mongodb-logs:
+  mongodb-audit:
+  forwarder-postgres-etc:
+  forwarder-mariadb-etc:
+  forwarder-mongodb-etc:

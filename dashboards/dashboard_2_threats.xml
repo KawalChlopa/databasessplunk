@@ -1,0 +1,1500 @@
+<form version="1.1">
+  <label>Database Security Monitor - Threats &amp; Anomalies</label>
+  <description>Kompleksowe monitorowanie zagrożeń bezpieczeństwa dla PostgreSQL, MariaDB i MongoDB | Wykrywanie SQLi, eskalacji uprawnień i anomalii</description>
+
+  <fieldset submitButton="true" autoRun="true">
+    <input type="time" token="time_token">
+      <label>⏱️ Zakres czasu</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    
+    
+  </fieldset>
+
+  <!-- ======================= POSTGRESQL ======================= -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 8px; text-align: center;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">🐘 PostgreSQL Security Dashboard</h1>
+          <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Monitoring zagrożeń i anomalii w czasie rzeczywistym</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- KPI Cards -->
+  <row>
+    <panel>
+      <title>🚨 Błędy krytyczne (ERROR/FATAL)</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=postgres FATAL OR ERROR
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xF58F39","0xD93F3C"]</option>
+        <option name="rangeValues">[0,10,50]</option>
+        <option name="underLabel">Wykryte błędy</option>
+        <option name="numberPrecision">0</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>🔐 Zmiany uprawnień</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=postgres ("GRANT" OR "REVOKE")
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD93F3C"]</option>
+        <option name="rangeValues">[0,5]</option>
+        <option name="underLabel">Operacje GRANT/REVOKE</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>💣 Operacje destrukcyjne</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=postgres ("DROP" OR "DELETE")
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD93F3C"]</option>
+        <option name="rangeValues">[0,10]</option>
+        <option name="underLabel">DROP/DELETE</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Timeline Chart -->
+  <row>
+    <panel>
+      <title>📊 Timeline zagrożeń w czasie</title>
+      <chart>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval threat_type=case(
+    match(_raw, "(?i)DROP|DELETE"), "💣 Operacje destrukcyjne",
+    match(_raw, "(?i)GRANT|REVOKE"), "🔐 Zmiany uprawnień",
+    match(_raw, "(?i)FATAL|ERROR"), "❌ Error",
+    1=1, "Other"
+  )
+| search threat_type!="Other"
+| timechart span=5m count by threat_type
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleX.text">Czas</option>
+        <option name="charting.axisTitleY.text">Liczba zdarzeń</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.seriesColors">[0xD93F3C, 0xF58F39, 0xF7BC38]</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Security Threats Section -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #2d3748; padding: 12px; border-radius: 6px; border-left: 4px solid #f56565;">
+          <h3 style="color: #fc8181; margin: 0;">⚠️ Wykrywanie zagrożeń bezpieczeństwa</h3>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- SQL Injection Detection -->
+  <row>
+    <panel>
+      <title>🔴 PostgreSQL — Wykrywanie SQL Injection</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval stmt = coalesce(statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where match(stmt_trim, "(?i)union\\s+select|'\\s*or\\s*'1'='1'|\\bor\\s+1\\s*=\\s*1\\b|sleep\\(|benchmark\\(|xp_cmdshell|load_file\\(|information_schema|hex\\(|unhex\\(")
+| dedup stmt_trim, user, dbname
+| stats count as Liczba by dbname, user
+| sort -Liczba
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">heatmap</option>
+        <option name="drilldown">cell</option>
+        <format type="color" field="Liczba">
+          <colorPalette type="minMidMax" maxColor="#DC143C" minColor="#FFE4E1"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Top 10 Suspicious Queries -->
+  <row>
+    <panel>
+      <title>🔍 Podejrzenie SQL Injection (logi)</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval stmt=coalesce(message, "")
+| eval sqli_boolean=if(
+    match(stmt, "(?i)(\bOR\b\s+1=1|' OR '1'='1'|\" OR \"1\"=\"1\"|' OR ''=''|WHERE 1=1|--|#)"),
+    1, 0)
+
+| eval sqli_union=if(
+    match(stmt, "(?i)UNION(\s+ALL)?\s+SELECT"),
+    1, 0)
+
+| eval sqli_time=if(
+    match(stmt, "(?i)(pg_sleep\(|SLEEP\(|benchmark\(|WAITFOR\s+DELAY)"),
+    1, 0)
+
+| eval sqli_error=if(
+    match(stmt, "(?i)(extractvalue|updatexml|floor\(rand\(\)\*2|@@version)"),
+    1, 0)
+
+| eval sql_injection=if(
+    sqli_boolean=1 OR sqli_union=1 OR sqli_time=1 OR sqli_error=1,
+    1, 0)
+
+| where sql_injection=1
+
+| eval Czas=strftime(_time,"%Y-%m-%d %H:%M:%S")
+| eval Podejrzenie=case(
+    sqli_boolean=1, "🚨 BOOLEAN SQL_INJECTION",
+    sqli_union=1, "🔗 UNION SQL_INJECTION",
+    sqli_time=1, "⏱ TIME-BASED SQL_INJECTION",
+    sqli_error=1, "❌ ERROR-BASED SQL_INJECTION",
+    true(), "⚠️ SUSPECT"
+)
+
+| sort -_time
+| table Czas, user, dbname, Podejrzenie, stmt
+| rename user as "Użytkownik", dbname as "Baza danych", stmt as "Zapytanie"
+
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        <format type="color" field="Podejrzenie">
+          <colorPalette type="map">{"🚨 SQL_INJECTION":#DC143C,"📤 DATA_EXFILTRATION":#FF8C00,"⬆️ PRIVILEGE_ESCALATION":#FFD700,"⚠️ SUSPECT":#FFA500}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Data Exfiltration -->
+  <row>
+    <panel>
+      <title>📤 Podejrzane SELECT * / Dumpy / Eksport danych</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval stmt = coalesce(statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where stmt_trim!=""
+| eval is_selectall = if(match(stmt_trim, "^(?i)\\s*select\\s+\\*"), 1, 0)
+| eval is_pg_dump = if(match(stmt_trim, "(?i)pg_dump|pg_restore|mysqldump"), 1, 0)
+| eval is_copy_file = if(
+    match(stmt_trim, "(?i)\\bcopy\\s+[^\\s]+\\s+to\\s+'[^']+'|\\bcopy\\s+[^\\s]+\\s+to\\s+\"[^\"]+\""),
+    1, 0
+  )
+| eval is_copy_stdout = if(
+    match(stmt_trim, "(?i)\\\\copy\\s+|\\bcopy\\s+[^\\s]+\\s+to\\s+stdout"),
+    1, 0
+  )
+| eval is_into_outfile = if(
+    match(stmt_trim, "(?i)\\binto\\s+outfile\\b"),
+    1, 0
+  )
+| eval is_sqli_multi = if(
+    match(stmt_trim, "(?i)select\\s+\\*[^;]*;\\s*(drop|insert|update|delete)\\b"),
+    1, 0
+  )
+| eval is_sensitive_select = if(
+    match(stmt_trim,
+          "(?i)select\\s+[^;]*(pesel|diagnosis|treatment)[^;]*from\\s+[^;]*(customers|sensitive_medical_data)"),
+    1, 0
+  )
+| eval Typ = case(
+    is_sqli_multi==1,        "💣 SQLI_MULTI",
+    is_sensitive_select==1,  "⚠️ SENSITIVE_SELECT",
+    is_pg_dump==1,           "💾 DUMP",
+    is_copy_file==1,         "📁 COPY_TO_FILE",
+    is_copy_stdout==1,       "🖥️ COPY_TO_STDOUT",
+    is_into_outfile==1,      "💿 INTO_OUTFILE",
+    is_selectall==1,         "📋 SELECT_ALL",
+    true(),                  null()
+  )
+
+| where isnotnull(Typ)
+
+| dedup Typ, stmt_trim, user, dbname
+
+| stats count as Liczba by Typ, dbname, user
+| sort - Liczba
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">heatmap</option>
+        <format type="color" field="Liczba">
+          <colorPalette type="minMidMax" maxColor="#FF4500" minColor="#FFE4B5"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+<row>
+  <panel>
+    <title>🔍 Szczegóły eksfiltracji danych(Postgres)</title>
+    <table>
+      <search>
+        <query><![CDATA[
+index=postgres
+| eval stmt = coalesce(statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where stmt_trim!=""
+| eval is_selectall = if(match(stmt_trim, "^(?i)\\s*select\\s+\\*"), 1, 0)
+| eval is_pg_dump = if(match(stmt_trim, "(?i)pg_dump|pg_restore|mysqldump"), 1, 0)
+| eval is_copy_file = if(
+    match(stmt_trim, "(?i)\\bcopy\\s+[^\\s]+\\s+to\\s+'[^']+'|\\bcopy\\s+[^\\s]+\\s+to\\s+\"[^\"]+\""),
+    1, 0
+  )
+| eval is_copy_stdout = if(
+    match(stmt_trim, "(?i)\\\\copy\\s+|\\bcopy\\s+[^\\s]+\\s+to\\s+stdout"),
+    1, 0
+  )
+
+| eval is_into_outfile = if(
+    match(stmt_trim, "(?i)\\binto\\s+outfile\\b"),
+    1, 0
+  )
+
+| eval is_sqli_multi = if(
+    match(stmt_trim, "(?i)select\\s+\\*[^;]*;\\s*(drop|insert|update|delete)\\b"),
+    1, 0
+  )
+
+| eval is_sensitive_select = if(
+    match(stmt_trim,
+          "(?i)select\\s+[^;]*(pesel|diagnosis|treatment)[^;]*from\\s+[^;]*(customers|sensitive_medical_data)"),
+    1, 0
+  )
+
+| eval Typ = case(
+    is_sqli_multi==1,        "💣 SQLI_MULTI",
+    is_sensitive_select==1,  "⚠️ SENSITIVE_SELECT",
+    is_selectall==1,         "📋 SELECT_ALL",
+    is_pg_dump==1,           "💾 DUMP",
+    is_copy_file==1,         "📁 COPY_TO_FILE",
+    is_copy_stdout==1,       "🖥️ COPY_TO_STDOUT",
+    is_into_outfile==1,      "💿 INTO_OUTFILE",
+    true(),                  null()
+  )
+
+| where Typ!=""
+| rex field=stmt_trim "(?i)COPY\\s+\\S+\\s+TO\\s+'(?<filepath>[^']+)'"
+| eval filepath = coalesce(filepath, "nieznane")
+
+| eval short_stmt = if(len(stmt_trim)>400, substr(stmt_trim,0,400) + "...", stmt_trim)
+
+| table _time, host, user, dbname, Typ, filepath, short_stmt, stmt_trim, _raw
+| sort - _time
+| head 100
+
+        ]]></query>
+        <earliest>$time_token.earliest$</earliest>
+        <latest>$time_token.latest$</latest>
+      </search>
+      <option name="count">10</option>
+      <option name="wrap">true</option>
+      <option name="drilldown">row</option>
+      <format type="color" field="Typ">
+        <colorPalette type="map">{"PG_DUMP":"#FF4500","COPY_TO_FILE":"#FFD700","PSQL_BACKUP_COPY":"#FF8C00","SELECT_ALL":"#FFA500","UNION_SELECT":"#DC143C","LARGE_SELECT":"#FF6347","OTHER":"#D3D3D3"}</colorPalette>
+      </format>
+    </table>
+  </panel>
+</row>
+
+
+  <!-- Privilege Escalation -->
+  <row>
+    <panel>
+      <title>⬆️ Eskalacje uprawnień - Podsumowanie</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval stmt = coalesce(statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where match(stmt_trim, "(?i)\\b(grant|revoke)\\b")
+| dedup stmt_trim, user, dbname
+| eval Status = if(match(message, "(?i)permission denied|must be superuser|\\bERROR\\b|\\bFATAL\\b"), "❌ FAILED", "✅ SUCCESS")
+| stats count(eval(Status=="✅ SUCCESS")) as "Udane", count(eval(Status=="❌ FAILED")) as "Nieudane" by dbname, user
+| sort -Udane
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">15</option>
+        <format type="color" field="Udane">
+          <colorPalette type="minMidMax" maxColor="#FF6347" minColor="#98FB98"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Detailed Privilege Escalation -->
+  <row>
+    <panel>
+      <title>🔐 Szczegóły eskalacji uprawnień - Ostatnie 10 operacji</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval stmt = coalesce(statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where stmt_trim!=""
+| eval is_alter_role = if(match(stmt_trim, "(?i)\\bALTER\\s+ROLE\\b"),1,0)
+| eval is_create_role = if(match(stmt_trim, "(?i)\\bCREATE\\s+ROLE\\b"),1,0)
+| eval is_drop_role = if(match(stmt_trim, "(?i)\\bDROP\\s+ROLE\\b"),1,0)
+| eval is_grant = if(match(stmt_trim, "(?i)\\bGRANT\\b"),1,0)
+| eval is_revoke = if(match(stmt_trim, "(?i)\\bREVOKE\\b"),1,0)
+| eval is_super_grant = if(match(stmt_trim, "(?i)WITH\\s+SUPERUSER|\\bSUPERUSER\\b"),1,0)
+| eval is_role_change_stmt = if(is_alter_role==1 OR is_create_role==1 OR is_drop_role==1 OR is_grant==1 OR is_revoke==1,1,0)
+| where is_role_change_stmt=1
+| dedup stmt_trim, user, dbname
+| eval Status = case(
+    match(message, "(?i)^statement:"), "",
+    match(message, "(?i)permission denied|must be superuser|\\bERROR\\b|\\bFATAL\\b"), "❌ FAILED",
+    1==1, "✅ SUCCESS"
+)
+| eval Opis = case(
+    is_super_grant==1, "🔴 SUPERUSER grant",
+    is_grant==1, "🔐 GRANT privileges",
+    is_revoke==1, "🔓 REVOKE privileges",
+    is_alter_role==1, "⚙️ ALTER ROLE",
+    is_create_role==1, "➕ CREATE ROLE",
+    is_drop_role==1, "➖ DROP ROLE",
+    true(), ""
+)
+| eval Whitelisted = if(user IN ("postgres","dba"), "✅ YES", "⚠️ NO")
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| sort -_time
+| table Czas, user, dbname, Whitelisted, Opis, Status, stmt_trim
+| rename user as "Użytkownik", dbname as "Baza danych", stmt_trim as "Zapytanie"
+| head 10
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅ SUCCESS":#32CD32,"❌ FAILED":#DC143C}</colorPalette>
+        </format>
+        <format type="color" field="Whitelisted">
+          <colorPalette type="map">{"✅ YES":#90EE90,"⚠️ NO":#FFD700}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Database Operations -->
+  <row>
+    <panel>
+      <title>🗄️ Operacje na bazie danych - Ostatnie działania</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=postgres
+| eval stmt = coalesce(statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where match(stmt_trim, "(?i)\\b(drop|delete|truncate|create|insert|update)\\b")
+| dedup stmt_trim, user, dbname
+| eval Operacja = case(
+    match(stmt_trim, "(?i)\\bdrop\\b"), "🗑️ DROP",
+    match(stmt_trim, "(?i)\\bdelete\\b"), "❌ DELETE",
+    match(stmt_trim, "(?i)\\btruncate\\b"), "🧹 TRUNCATE",
+    match(stmt_trim, "(?i)\\bcreate\\b"), "➕ CREATE",
+    match(stmt_trim, "(?i)\\binsert\\b"), "📝 INSERT",
+    match(stmt_trim, "(?i)\\bupdate\\b"), "✏️ UPDATE",
+    true(), "OTHER"
+  )
+| eval Status = if(match(message, "(?i)permission denied|must be superuser|\\bERROR\\b|\\bFATAL\\b"), "❌ FAILED", "✅ SUCCESS")
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| table Czas, user, dbname, Operacja, Status, stmt_trim
+| rename user as "Użytkownik", dbname as "Baza danych", stmt_trim as "Zapytanie"
+| sort -Czas
+| head 25
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">25</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">true</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅ SUCCESS":#32CD32,"❌ FAILED":#DC143C}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ======================= MARIADB ======================= -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #00758f 0%, #005f73 100%); padding: 20px; border-radius: 8px; text-align: center;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">🦭 MariaDB Security Dashboard</h1>
+          <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Monitoring zagrożeń i anomalii w czasie rzeczywistym</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- KPI Cards -->
+  <row>
+    <panel>
+      <title>🚨 Błędy krytyczne (ERROR/FATAL)</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=mariadb ("ERROR" OR "FATAL")
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xF58F39","0xD93F3C"]</option>
+        <option name="rangeValues">[0,10,50]</option>
+        <option name="underLabel">Wykryte błędy</option>
+        <option name="numberPrecision">0</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>🔐 Zmiany uprawnień</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=mariadb ("GRANT" OR "REVOKE")
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD93F3C"]</option>
+        <option name="rangeValues">[0,5]</option>
+        <option name="underLabel">Operacje GRANT/REVOKE</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>💣 Operacje destrukcyjne</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=mariadb ("DROP" OR "DELETE" OR "TRUNCATE")
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD93F3C"]</option>
+        <option name="rangeValues">[0,10]</option>
+        <option name="underLabel">DROP/DELETE</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Timeline Chart -->
+  <row>
+    <panel>
+      <title>📊 Timeline zagrożeń w czasie</title>
+      <chart>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| eval threat_type=case(
+    match(_raw, "(?i)(drop|delete|truncate)"),            "Operacje destrukcyjne",
+    match(_raw, "(?i)(grant|revoke|create user)"),        "Zmiana uprawnień",
+    match(_raw, "(?i)(error|fatal)"),                     "Error",
+    1=1, "Other"
+)
+| search threat_type!="Other"
+| timechart span=5m count by threat_type
+
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleX.text">Czas</option>
+        <option name="charting.axisTitleY.text">Liczba zdarzeń</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.seriesColors">[0xD93F3C, 0xF58F39, 0xF7BC38]</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Security Threats Section -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #2d3748; padding: 12px; border-radius: 6px; border-left: 4px solid #f56565;">
+          <h3 style="color: #fc8181; margin: 0;">⚠️ Wykrywanie zagrożeń bezpieczeństwa</h3>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- SQL Injection Detection -->
+  <row>
+    <panel>
+      <title>🔴 MariaDB — Wykrywanie SQL Injection</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| rex field=_raw "^(?<raw_time>\d{8}\s\d{2}:\d{2}:\d{2}),(?<service>[^,]+),(?<user>[^,]+),(?<host>[^,]+),(?<port>[^,]+),(?<pid>[^,]+),(?<command>[^,]+),(?<db>[^,]+),(?<query>.*)$"
+| eval query = trim(query, "'\" ")
+| eval stmt = coalesce(query, statement, message, _raw)
+| eval stmt_trim = lower(trim(stmt))
+| where match(stmt_trim, "(?i)union\\s+select|'\\s*or\\s*'1'='1'|\\bor\\s+1\\s*=\\s*1\\b|select\\s+1\\s*=\\s*1|select\\s+\\*|sleep\\(|benchmark\\(|load_file\\(|into\\s+outfile|mysqldump|information_schema|hex\\(|unhex\\(")
+| eval db = coalesce(dbname, db, database)
+| dedup stmt_trim, user, db
+| stats count as Liczba by db, user
+| sort -Liczba
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">heatmap</option>
+        <option name="drilldown">cell</option>
+        <format type="color" field="Liczba">
+          <colorPalette type="minMidMax" maxColor="#DC143C" minColor="#FFE4E1"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Top 10 Suspicious Queries -->
+  <row>
+    <panel>
+      <title>🔍 Podejrzenie SQL Injection (logi)</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| rex field=_raw "^(?<raw_time>\d{8}\s\d{2}:\d{2}:\d{2}),(?<service>[^,]+),(?<user>[^,]+),(?<host>[^,]+),(?<port>[^,]+),(?<pid>[^,]+),(?<command>[^,]+),(?<db>[^,]+),'(?<query>[^']*)',(?<bytes>\d+)"
+| eval _time = if(isnull(_time) OR _time==0, strptime(raw_time, "%Y%m%d %H:%M:%S"), _time)
+
+| eval stmt=coalesce(query, statement, msg, _raw)
+| eval stmt_l = lower(stmt)
+
+| eval sqli_boolean = if(match(stmt_l,
+    "(\\bor\\b\\s+1=1|\\band\\b\\s+1=1|' or '1'='1|\" or \"1\"=\"1\"|where 1=1|1=1)"),
+    1,0)
+
+| eval sqli_union = if(match(stmt_l,
+    "union(\\s+all)?\\s+select"),
+    1,0)
+
+| eval sqli_time = if(match(stmt_l,
+    "(sleep\\s*\\(|benchmark\\s*\\()"),
+    1,0)
+
+| eval sqli_error = if(match(stmt_l,
+    "(updatexml|extractvalue|floor\\(rand\\))"),
+    1,0)
+
+| eval sqli_stacked = if(match(stmt_l,
+    ";\\s*(drop|delete|update|insert|create|alter)"),
+    1,0)
+
+| eval sqli_comment = if(match(stmt_l,
+    "(--|#|/\\*)"),
+    1,0)
+
+| eval sql_injection = if(
+    sqli_boolean=1 OR 
+    sqli_union=1 OR 
+    sqli_time=1 OR 
+    sqli_error=1 OR 
+    sqli_stacked=1 OR
+    sqli_comment=1,
+    1,0)
+
+| where sql_injection=1
+
+| eval Czas=strftime(_time,"%Y-%m-%d %H:%M:%S")
+
+| eval Podejrzenie = case(
+    sqli_union=1,        "SQL Injection – UNION-based",
+    sqli_boolean=1,      "SQL Injection – Boolean-based (1=1)",
+    sqli_time=1,         "SQL Injection – Time-based (sleep/benchmark)",
+    sqli_error=1,        "SQL Injection – Error-based (updatexml/extractvalue)",
+    sqli_stacked=1,      "SQL Injection – Stacked queries (; DROP ... )",
+    sqli_comment=1,      "SQL Injection – Comment injection (--, #, /* */)",
+    true(),              "SQL Injection – Suspicious pattern"
+)
+
+| table Czas, user, db, Podejrzenie, stmt_l
+| rename user AS Uzytkownik, db AS Baza_danych, stmt_l AS Zapytanie
+| sort -Czas
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        <format type="color" field="Podejrzenie">
+          <colorPalette type="map">{"SQL_INJECTION":#DC143C,"DATA_EXFILTRATION / SELECT_ALL":#FF8C00,"PRIVILEGE_ESCALATION":#FFD700,"SUSPECT":#FFA500}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Data Exfiltration -->
+  <row>
+    <panel>
+      <title>📤 Podejrzane SELECT * / Dumpy / Eksport danych</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| eval stmt = coalesce(query, statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where stmt_trim!=""
+| rex field=_raw "^\d{8}\s*\d{2}:\d{2}:\d{2},[^,]+,(?<db_user>[^,]+),(?<remote_host>[^,]+),\d+,\d+,(?<command>[^,]+),(?<db_log>[^,]+),"
+| eval is_selectall = if(match(stmt_trim, "^(?i)\\s*select\\s+\\*"), 1, 0)
+| eval is_into_outfile = if(match(stmt_trim, "(?i)\\binto\\s+(outfile|dumpfile)\\b"), 1, 0)
+| eval is_load_file = if(match(stmt_trim, "(?i)load_file\\s*\\("), 1, 0)
+| eval is_select_into_file = if(match(stmt_trim, "(?i)select\\s+.*into\\s+.*file"), 1, 0)
+| eval is_mysqldump = if(
+    match(stmt_trim, "(?i)(SQL_NO_CACHE|INFORMATION_SCHEMA\\.FILES|INFORMATION_SCHEMA\\.COLUMNS|mysqldump|mariadb-dump)"),
+    1, 0
+  )
+| eval is_outbound_copy = if(
+    match(stmt_trim, "(?i)(copy\\s+.*to\\s+|outfile|dumpfile|into\\s+external)"),
+    1, 0
+  )
+| eval is_sqli_multi = if(
+    match(stmt_trim, "(?i)select\\s+\\*[^;]*;\\s*(drop|insert|update|delete)\\b"),
+    1, 0
+  )
+| eval is_sensitive_select = if(
+    match(stmt_trim,
+          "(?i)select\\s+[^;]*(pesel|account_number|amount)[^;]*from\\s+[^;]*(customers|financial_transactions)"),
+    1, 0
+  )
+| eval Typ = case(
+    is_sqli_multi==1,        "💣 SQLI_MULTI",
+    is_sensitive_select==1,  "⚠️ SENSITIVE_SELECT",
+    is_mysqldump==1,         "DATABASE_DUMP",
+    is_into_outfile==1,      "INTO_OUTFILE",
+    is_load_file==1,         "LOAD_FILE",
+    is_select_into_file==1,  "SELECT_INTO_FILE",
+    is_outbound_copy==1,     "COPY/OUTBOUND",
+    is_selectall==1,         "SELECT_ALL",
+    true(),                  null()
+  )
+
+| where isnotnull(Typ)
+| eval Opis = case(
+    Typ=="DATABASE_DUMP",      "Zrzut bazy danych (mysqldump/mariadb-dump)",
+    Typ=="INTO_OUTFILE",       "Eksport danych do pliku OUTFILE lub DUMPFILE",
+    Typ=="LOAD_FILE",          "Odczyt pliku z systemu serwera (LOAD_FILE)",
+    Typ=="SELECT_INTO_FILE",   "Eksport SELECT INTO FILE",
+    Typ=="COPY/OUTBOUND",      "Kopiowanie danych poza serwer (OUTFILE/COPY)",
+    Typ=="SELECT_ALL",         "Masowy SELECT * (potencjalne wyciąganie danych)",
+    Typ=="💣 SQLI_MULTI",      "SQL injection z wieloma komendami (np. DROP TABLE)",
+    Typ=="⚠️ SENSITIVE_SELECT","SELECT danych wrażliwych (PESEL / transakcje)",
+    true(),                    "Inne"
+  )
+| eval db   = coalesce(dbname, db, database, db_log, "nieznana")
+| eval user = coalesce(user, db_user, "nieznany/root")
+
+| dedup Typ, stmt_trim, user, db
+| stats count as Liczba by Typ, Opis, db, user
+| sort -Liczba
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">heatmap</option>
+        <format type="color" field="Liczba">
+          <colorPalette type="minMidMax" maxColor="#FF4500" minColor="#FFE4B5"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Detailed Data Exfiltration -->
+  <row>
+    <panel>
+      <title>🔍 Szczegóły eksfiltracji danych </title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| eval stmt = coalesce(query, statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where stmt_trim!=""
+
+| rex field=_raw "^\d{8}?\s*\d{2}:\d{2}:\d{2},[^,]+,(?<db_user>[^,]+),(?<remote_host>[^,]+),\d+,\d+,(?<command>[^,]+),(?<db_log>[^,]+),"
+
+| eval is_selectall = if(match(stmt_trim, "^(?i)\\s*select\\s+\\*"), 1, 0)
+
+| eval is_into_outfile = if(match(stmt_trim, "(?i)\\binto\\s+(outfile|dumpfile)\\b"), 1, 0)
+
+| eval is_load_file = if(match(stmt_trim, "(?i)load_file\\s*\\("), 1, 0)
+
+| eval is_select_into_file = if(match(stmt_trim, "(?i)select\\s+.*into\\s+.*file"), 1, 0)
+
+| eval is_mysqldump = if(
+    match(stmt_trim,
+        "(?i)(SQL_NO_CACHE|INFORMATION_SCHEMA\\.FILES|INFORMATION_SCHEMA\\.COLUMNS|mysqldump|mariadb-dump)"
+    ), 1, 0)
+
+| eval is_outbound_copy = if(
+    match(stmt_trim, "(?i)(copy\\s+.*to\\s+|outfile|dumpfile|into\\s+external)"),
+    1, 0)
+
+| eval is_sqli_multi = if(
+    match(stmt_trim, "(?i)select\\s+\\*[^;]*;\\s*(drop|insert|update|delete)\\b"),
+    1, 0)
+
+| eval is_sensitive_select = if(
+    match(stmt_trim,
+        "(?i)select\\s+[^;]*(pesel|account_number|amount)[^;]*from\\s+[^;]*(customers|financial_transactions)"
+    ), 1, 0)
+| eval Typ = case(
+    is_sqli_multi==1,        "💣 SQLI_MULTI",
+    is_sensitive_select==1,  "⚠️ SENSITIVE_SELECT",
+    is_mysqldump==1,         "DATABASE_DUMP",
+    is_into_outfile==1,      "INTO_OUTFILE",
+    is_load_file==1,         "LOAD_FILE",
+    is_select_into_file==1,  "SELECT_INTO_FILE",
+    is_outbound_copy==1,     "COPY/OUTBOUND",
+    is_selectall==1,         "SELECT_ALL",
+    true(),                  null()
+  )
+
+| where isnotnull(Typ)
+| eval Opis = case(
+    Typ=="DATABASE_DUMP",      "Zrzut bazy danych (mysqldump/mariadb-dump)",
+    Typ=="INTO_OUTFILE",       "Eksport danych do pliku OUTFILE lub DUMPFILE",
+    Typ=="LOAD_FILE",          "Odczyt pliku z systemu serwera (LOAD_FILE)",
+    Typ=="SELECT_INTO_FILE",   "Eksport SELECT INTO FILE",
+    Typ=="COPY/OUTBOUND",      "Kopiowanie danych poza serwer (OUTFILE/COPY)",
+    Typ=="SELECT_ALL",         "Masowy SELECT * (potencjalne wyciąganie danych)",
+    Typ=="💣 SQLI_MULTI",      "SQL injection z wieloma komendami (np. DROP TABLE)",
+    Typ=="⚠️ SENSITIVE_SELECT","SELECT danych wrażliwych (PESEL / transakcje)",
+    true(),                    "Inne"
+  )
+
+| eval db   = coalesce(dbname, database, db_log, "nieznana")
+| eval user = coalesce(user, db_user, "nieznany/root")
+
+| sort -_time
+| table _time, host, user, db, Typ, Opis, stmt_trim, _raw
+| head 100
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        <format type="color" field="Podejrzenie">
+          <colorPalette type="map">{"SQL_INJECTION":#DC143C,"SCHEMA_ENUMERATION":#FF8C00,"INTO_OUTFILE":#FFD700,"DB_DUMP":#FF4500,"SELECT_ALL":#FFA500,"LOAD_FILE":#FF6347,"SELECT_INTO_FILE":#FF7F50,"OTHER":#D3D3D3}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Privilege Escalation -->
+  <row>
+    <panel>
+      <title>⬆️ Eskalacje uprawnień - Podsumowanie</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| rex field=_raw "^(?<raw_time>\d{8}\s\d{2}:\d{2}:\d{2}),(?<service>[^,]+),(?<user>[^,]+),(?<host>[^,]+),(?<port>[^,]+),(?<pid>[^,]+),(?<command>[^,]+),(?<db>[^,]*),(?<query>.*),(?<error_code>\d+)$"
+| eval query = trim(query, "'\" ")
+| eval stmt = coalesce(query, statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where match(stmt_trim, "(?i)\\b(grant|revoke|create user|drop user|alter user|set password|flush privileges)\\b")
+| dedup stmt_trim, user, db
+| eval Status = if(error_code=="0","SUCCESS","FAILED")
+| stats count(eval(Status=="SUCCESS")) AS Udane,
+        count(eval(Status=="FAILED"))  AS Nieudane
+  BY db, user
+| sort -Udane
+
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">15</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Detailed Privilege Escalation -->
+  <row>
+    <panel>
+      <title>🔐 Szczegóły eskalacji uprawnień</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| rex field=_raw "^(?<raw_time>\d{8}\s\d{2}:\d{2}:\d{2}),(?<service>[^,]+),(?<user>[^,]+),(?<host>[^,]+),(?<port>[^,]+),(?<pid>[^,]+),(?<command>[^,]+),(?<db>[^,]*),(?<query>.*?),(?<error_code>\d+)$"
+| eval query = trim(query, "'\" ")
+| eval stmt = coalesce(query, statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where stmt_trim!=""
+| eval is_create_user     = if(match(stmt_trim, "(?i)\bcreate\s+user\b"),1,0)
+| eval is_drop_user       = if(match(stmt_trim, "(?i)\bdrop\s+user\b"),1,0)
+| eval is_alter_user      = if(match(stmt_trim, "(?i)\balter\s+user\b"),1,0)
+| eval is_grant           = if(match(stmt_trim, "(?i)\bgrant\b"),1,0)
+| eval is_revoke          = if(match(stmt_trim, "(?i)\brevoke\b"),1,0)
+| eval is_set_password    = if(match(stmt_trim, "(?i)\bset\s+password\b"),1,0)
+| eval is_flush_privileges= if(match(stmt_trim, "(?i)\bflush\s+privileges\b"),1,0)
+| eval is_role_change_stmt = if(
+    is_create_user==1 OR is_drop_user==1 OR is_alter_user==1 OR
+    is_grant==1 OR is_revoke==1 OR is_set_password==1 OR is_flush_privileges==1,
+    1,0
+  )
+| where is_role_change_stmt=1
+| dedup stmt_trim, user, db
+| eval Status = if(error_code=="0","SUCCESS","FAILED")
+| eval Opis = case(
+    is_create_user==1,      "CREATE USER",
+    is_drop_user==1,        "DROP USER",
+    is_alter_user==1,       "ALTER USER",
+    is_grant==1,            "GRANT",
+    is_revoke==1,           "REVOKE",
+    is_set_password==1,     "SET PASSWORD",
+    is_flush_privileges==1, "FLUSH PRIVILEGES",
+    true(),                 ""
+  )
+| eval Whitelisted = if(user IN ("root","admin","dbadmin"), "YES", "NO")
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| sort -_time
+| table Czas, user, db, Whitelisted, Opis, Status, stmt_trim, error_code, _raw
+| rename user AS "Użytkownik", db AS "Baza danych",
+         stmt_trim AS "Zapytanie / Statement",
+         error_code AS "Kod błędu",
+         _raw AS "Raw"
+| head 100
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        
+        <format type="color" field="Whitelisted">
+          <colorPalette type="map">{"YES":#90EE90,"NO":#FFD700}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Database Operations -->
+  <row>
+    <panel>
+      <title>🗄️ Operacje na bazie danych - Ostatnie działania</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mariadb
+| rex field=_raw "^(?<raw_time>\d{8}\s\d{2}:\d{2}:\d{2}),(?<service>[^,]+),(?<user>[^,]+),(?<host>[^,]+),(?<port>[^,]+),(?<pid>[^,]+),(?<command>[^,]+),(?<db>[^,]+),(?<query>.*)$"
+| eval query = trim(query, "'\" ")
+| eval stmt = coalesce(query, statement, message, _raw)
+| eval stmt_trim = trim(stmt)
+| where match(stmt_trim, "(?i)\\b(drop|delete|truncate|create|insert|update)\\b")
+| dedup stmt_trim, user, db
+| eval Pos = case(
+    match(stmt_trim, "(?i)\\bdrop\\b"), "DROP",
+    match(stmt_trim, "(?i)\\bdelete\\b"), "DELETE",
+    match(stmt_trim, "(?i)\\btruncate\\b"), "TRUNCATE",
+    match(stmt_trim, "(?i)\\bcreate\\b"), "CREATE",
+    match(stmt_trim, "(?i)\\binsert\\b"), "INSERT",
+    match(stmt_trim, "(?i)\\bupdate\\b"), "UPDATE",
+    true(), "OTHER"
+  )
+| eval Status = if(match(message, "(?i)access denied|denied|ERROR|FATAL"), "FAILED", "SUCCESS")
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| table Czas, user, db, Pos, Status, stmt_trim, message, _raw
+| rename user AS "Użytkownik", db AS "Baza danych", stmt_trim AS "Zapytanie / Statement", message AS "Message", _raw AS "Raw", Pos AS "Operacja"
+| sort -Czas
+| head 50
+        ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">25</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">true</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"SUCCESS":#32CD32,"FAILED":#DC143C}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+
+
+   <!-- ======================= MONGODB ======================= -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: linear-gradient(135deg, #4db33d 0%, #3b8e2e 100%); padding: 20px; border-radius: 8px; text-align: center;">
+          <h1 style="color: white; margin: 0; font-size: 28px;">🍃 MongoDB Security Dashboard</h1>
+          <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Monitoring zagrożeń i anomalii w czasie rzeczywistym</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- KPI Cards -->
+  <row>
+    <panel>
+      <title>🚨 Błędy krytyczne (ERROR/FATAL)</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| search "error" OR "Error" OR "ERROR" OR "fatal" OR "Fatal" OR "FATAL"
+| stats count
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xF58F39","0xD93F3C"]</option>
+        <option name="rangeValues">[0,10,50]</option>
+        <option name="underLabel">Wykryte błędy</option>
+        <option name="numberPrecision">0</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>🔐 Zmiany uprawnień</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=mongodb 
+| search "createUser" OR "dropUser" OR "grantRolesToUser" OR "revokeRolesFromUser" OR "updateRole" OR "dropRole"
+| stats count AS original
+| eval count = original / 2
+| fields count
+
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD93F3C"]</option>
+        <option name="rangeValues">[0,5]</option>
+        <option name="underLabel">Operacje uprawnień</option>
+      </single>
+    </panel>
+
+    <panel>
+      <title>💣 Operacje destrukcyjne</title>
+      <single>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| search "drop" OR "delete" OR "remove" OR "dropDatabase" OR "dropCollection"
+| stats count AS original
+| eval count = original / 2
+| fields count
+
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="drilldown">all</option>
+        <option name="colorMode">block</option>
+        <option name="rangeColors">["0x65A637","0xF7BC38","0xD93F3C"]</option>
+        <option name="rangeValues">[0,10]</option>
+        <option name="underLabel">Operacje na danych</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Timeline Chart -->
+  <row>
+    <panel>
+      <title>📊 Timeline zagrożeń w czasie</title>
+      <chart>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| eval threat_type = case(
+    match(_raw, "(?i)(unauthorized|authentication failed|error|fatal)"), "❌ Błędy i błędy uwierzytelnienia",
+    match(_raw, "(?i)(drop|delete|remove)"), "💣 Operacje destrukcyjne",
+    match(_raw, "(?i)(createUser|dropUser|grantRoles|revokeRoles)"), "🔐 Zmiany uprawnień",
+    1==1, "Other"
+)
+| search threat_type!="Other"
+| timechart span=5m count by threat_type
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.axisTitleX.text">Czas</option>
+        <option name="charting.axisTitleY.text">Liczba zdarzeń</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.chart.showDataLabels">none</option>
+        <option name="charting.seriesColors">[0xD93F3C, 0xF58F39, 0xF7BC38]</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Security Threats Section -->
+  <row>
+    <panel>
+      <html>
+        <div style="background: #2d3748; padding: 12px; border-radius: 6px; border-left: 4px solid #f56565;">
+          <h3 style="color: #fc8181; margin: 0;">⚠️ Wykrywanie zagrożeń bezpieczeństwa</h3>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Data Exfiltration Summary -->
+  <row>
+    <panel>
+      <title>📤 Podejrzane operacje / Dumpy / Eksport danych - Podsumowanie</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| spath
+| eval ctx_safe = coalesce(ctx,"")
+| eval ns_safe  = coalesce('attr.ns',"")
+| eval coll     = 'attr.command.find'
+| eval db_name  = 'attr.command.$$db'
+| eval stmt = _raw
+
+| eval is_mongodump   = if(match(stmt, "(?i)mongodump"), 1, 0)
+| eval is_mongoexport = if(match(stmt, "(?i)mongoexport"), 1, 0)
+| eval is_copy_db     = if(match(stmt, "(?i)copyDatabase|cloneDatabase"), 1, 0)
+| eval is_aggregate_out = if(match(stmt, "(?i)\\$out|\\$merge"), 1, 0)
+
+| eval is_find_all = if(
+    isnotnull(coll)
+    AND match(_raw, "\"filter\"\\s*:\\s*\\{\\s*\\}")
+    AND NOT (
+      ctx_safe IN ("LogicalSessionCacheRefresh","LogicalSessionCacheReap")
+      OR like(ns_safe,"admin.%")
+      OR like(ns_safe,"config.%")
+      OR like(ns_safe,"local.%")
+    ),
+    1, 0
+)
+
+| eval Typ = case(
+    is_mongodump==1,      "💾 MONGODUMP",
+    is_mongoexport==1,    "📤 MONGOEXPORT",
+    is_copy_db==1,        "📋 COPY/CLONE DB",
+    is_aggregate_out==1,  "🔄 AGGREGATE $OUT",
+    is_find_all==1,       "🔍 FIND_ALL ({})",
+    true(), null()
+)
+
+| where isnotnull(Typ)
+| eval user = coalesce(user, "nieznany")
+| eval db   = coalesce(ns_safe, db_name, ns, database, "nieznana")
+
+| dedup Typ, stmt, user, db
+| stats count as Liczba by Typ, db, user
+
+| eval Liczba = round(Liczba / 2, 0)
+
+| sort -Liczba
+
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">20</option>
+        <option name="dataOverlayMode">heatmap</option>
+        <format type="color" field="Liczba">
+          <colorPalette type="minMidMax" maxColor="#FF4500" minColor="#FFE4B5"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Data Exfiltration Details -->
+  <row>
+    <panel>
+      <title>🔍 Szczegóły eksfiltracji danych (MongoDB)</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| spath
+| eval ctx_safe = coalesce(ctx,"")
+| eval ns_safe  = coalesce('attr.ns',"")
+| eval coll     = 'attr.command.find'
+| eval db_name  = 'attr.command.$$db'
+| eval stmt = coalesce('attr.command', msg, _raw)
+
+| eval is_mongodump   = if(match(stmt, "(?i)mongodump"), 1, 0)
+| eval is_mongoexport = if(match(stmt, "(?i)mongoexport"), 1, 0)
+| eval is_copy_db     = if(match(stmt, "(?i)copyDatabase|cloneDatabase"), 1, 0)
+| eval is_aggregate_out = if(match(stmt, "(?i)\\$out|\\$merge"), 1, 0)
+
+| eval is_find_all = if(
+    isnotnull(coll)
+    AND match(_raw, "\"filter\"\\s*:\\s*\\{\\s*\\}")
+    AND NOT (
+      ctx_safe IN ("LogicalSessionCacheRefresh","LogicalSessionCacheReap")
+      OR like(ns_safe,"admin.%")
+      OR like(ns_safe,"config.%")
+      OR like(ns_safe,"local.%")
+    ),
+    1, 0
+)
+
+| eval Typ = case(
+    is_mongodump==1,      "💾 MONGODUMP",
+    is_mongoexport==1,    "📤 MONGOEXPORT",
+    is_copy_db==1,        "📋 COPY/CLONE DB",
+    is_aggregate_out==1,  "🔄 AGGREGATE $OUT",
+    is_find_all==1,       "🔍 FIND_ALL ({})",
+    true(), null()
+)
+
+| where isnotnull(Typ)
+| eval user = coalesce('attr.user', user, "nieznany")
+| eval db   = coalesce(ns_safe, db_name, ns, database, "nieznana")
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+
+| sort -_time
+| table Czas, user, db, Typ, stmt, _raw
+| rename user as "Użytkownik", db as "Baza danych", stmt as "Komenda"
+| head 100
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        <format type="color" field="Typ">
+          <colorPalette type="map">{"💾 MONGODUMP":#FF4500,"📤 MONGOEXPORT":#FFD700,"📋 COPY/CLONE DB":#FF8C00,"🔄 AGGREGATE $OUT":#FFA500,"🔍 FIND_ALL ({})":#FF6347}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Privilege Escalation Summary -->
+  <row>
+    <panel>
+      <title>⬆️ Eskalacje uprawnień - Podsumowanie</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| search createUser OR dropUser OR grantRolesToUser OR revokeRolesFromUser OR updateRole OR dropRole
+| spath
+
+| eval target_user = coalesce(
+    'attr.command.createUser',
+    'attr.command.dropUser',
+    'attr.command.grantRolesToUser',
+    'attr.command.revokeRolesFromUser',
+    'attr.command.updateRole',
+    'attr.command.dropRole'
+)
+| where msg!="About to run the command" AND isnotnull(target_user)
+
+| eval user = coalesce(target_user, user, "nieznany")
+
+| eval has_error = if(
+    'attr.ok'=="0"
+    OR isnotnull('attr.errMsg')
+    OR isnotnull('attr.errName')
+    OR match(_raw, "(?i)(error|unauthorized|failed|exception)"),
+    1, 0
+)
+| eval Status = if(has_error==1, "❌ FAILED", "✅ SUCCESS")
+
+| stats
+    sum(eval(Status=="✅ SUCCESS")) as Udane,
+    sum(eval(Status=="❌ FAILED"))  as Nieudane
+  by user
+
+| eval Udane    = round(Udane/2, 0)
+| eval Nieudane = round(Nieudane/2, 0)
+
+| rename user as "Użytkownik"
+| sort -Udane
+
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="rowNumbers">true</option>
+        <option name="count">15</option>
+        <format type="color" field="Udane">
+          <colorPalette type="minMidMax" maxColor="#FF6347" minColor="#98FB98"></colorPalette>
+          <scale type="minMidMax"></scale>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Privilege Escalation Details -->
+  <row>
+    <panel>
+      <title>🔐 Szczegóły eskalacji uprawnień </title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| search createUser OR dropUser OR grantRolesToUser OR revokeRolesFromUser OR updateRole OR dropRole
+| spath
+
+| eval target_user = coalesce(
+    'attr.command.createUser',
+    'attr.command.dropUser',
+    'attr.command.grantRolesToUser',
+    'attr.command.revokeRolesFromUser',
+    'attr.command.updateRole',
+    'attr.command.dropRole'
+)
+
+| where msg!="About to run the command" AND isnotnull(target_user)
+
+| eval is_create_user  = if(isnotnull('attr.command.createUser'),          1, 0)
+| eval is_drop_user    = if(isnotnull('attr.command.dropUser'),            1, 0)
+| eval is_grant_roles  = if(isnotnull('attr.command.grantRolesToUser'),    1, 0)
+| eval is_revoke_roles = if(isnotnull('attr.command.revokeRolesFromUser'), 1, 0)
+| eval is_update_role  = if(isnotnull('attr.command.updateRole'),          1, 0)
+| eval is_drop_role    = if(isnotnull('attr.command.dropRole'),            1, 0)
+
+| eval has_error = if(
+    'attr.ok'=="0"
+    OR isnotnull('attr.errMsg')
+    OR isnotnull('attr.errName')
+    OR match(_raw, "(?i)(error|unauthorized|failed|exception)"),
+    1, 0
+)
+
+| eval Status = if(has_error==1, "❌ FAILED", "✅ SUCCESS")
+
+| eval Opis = case(
+    is_create_user==1,  "CREATE USER",
+    is_drop_user==1,    "DROP USER",
+    is_grant_roles==1,  "GRANT ROLES",
+    is_revoke_roles==1, "REVOKE ROLES",
+    is_update_role==1,  "UPDATE ROLE",
+    is_drop_role==1,    "DROP ROLE",
+    true(),             "OTHER"
+)
+
+| eval user = coalesce(target_user, user, "nieznany")
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+
+| eval cmd = _raw
+
+| sort -_time
+| table Czas, user, Opis, Status, cmd
+| rename user as "Użytkownik", cmd as "Komenda"
+| head 10
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅ SUCCESS":#32CD32,"❌ FAILED":#DC143C}</colorPalette>
+        </format>
+        <format type="color" field="Whitelisted">
+          <colorPalette type="map">{"✅ YES":#90EE90,"⚠️ NO":#FFD700}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Database Operations -->
+  <row>
+    <panel>
+      <title>🗄️ Operacje na bazie danych - Ostatnie działania</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| search "drop" OR "delete" OR "insert" OR "update" OR "create" OR "remove"
+| spath
+
+| eval ns = coalesce('attr.ns', ns)
+| eval db = coalesce('attr.command.$db', mvindex(split(ns, "."), 0), "nieznana")
+| eval coll = if(isnull(ns) OR ns="", "", mvindex(split(ns, "."), 1))
+
+| eval stmt = coalesce('attr.command', msg, _raw)
+
+| eval Operacja = case(
+    match(stmt, "(?i)\\bdrop"),               "🗑️ DROP",
+    match(stmt, "(?i)\\b(delete|remove)\\b"), "❌ DELETE",
+    match(stmt, "(?i)\\binsert"),             "📝 INSERT",
+    match(stmt, "(?i)\\bupdate"),             "✏️ UPDATE",
+    match(stmt, "(?i)\\bcreate"),             "➕ CREATE",
+    true(),                                   "OTHER"
+)
+
+| eval Status = if(match(_raw, "(?i)(error|unauthorized|failed)"), "❌ FAILED", "✅ SUCCESS")
+| eval user   = coalesce('attr.user', user, "nieznany")
+
+
+| where NOT (
+
+    db IN ("admin","config","local")
+
+    OR like(coll, "system.%")
+
+    OR ns="admin.$cmd"
+
+    OR c IN ("STORAGE","NETWORK","CONTROL","FTDC")
+    OR ctx IN ("initandlisten","conn0","ReplCoord-0","conn1")
+    OR match(msg, "(?i)(wiredtiger|opening|shutdown|checkpoint|ftdc|recovery|journal)")
+)
+
+| eval Czas = strftime(_time, "%Y-%m-%d %H:%M:%S")
+
+| dedup stmt, user, db, coll
+| table Czas, user, db, Operacja, Status, stmt
+| rename user as "Użytkownik", db as "Baza danych", stmt as "Komenda"
+| sort -Czas
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">25</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">true</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅ SUCCESS":#32CD32,"❌ FAILED":#DC143C}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Error Details -->
+  <row>
+    <panel>
+      <title>🔴 MongoDB — Ostatnie błędy krytyczne (ERROR/FATAL)</title>
+      <table>
+        <search>
+          <query><![CDATA[
+index=mongodb
+| search "error" OR "Error" OR "ERROR" OR "fatal" OR "Fatal" OR "FATAL" OR "unauthorized"
+| spath
+| eval severity  = coalesce(s, "brak")
+| eval component = coalesce(c, "brak")
+| eval context   = coalesce(ctx, "brak")
+| eval message   = coalesce(msg, "brak")
+| eval user      = coalesce('attr.user', user, "nieznany")
+| eval db        = coalesce('attr.ns', 'attr.command.$$db', ns, "nieznana")
+| eval Czas      = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| where NOT match(msg, "(?i)(wiredtiger|checkpoint|recovery|journal)")
+| dedup message, user, db
+| table Czas, user, db, severity, component, context, message, _raw
+| rename user as "Użytkownik", db as "Baza danych", severity as "Poziom", component as "Komponent", context as "Kontekst", message as "Wiadomość"
+| sort -Czas
+| head 100
+          ]]></query>
+          <earliest>$time_token.earliest$</earliest>
+          <latest>$time_token.latest$</latest>
+        </search>
+        <option name="count">10</option>
+        <option name="rowNumbers">true</option>
+        <option name="wrap">true</option>
+        <option name="drilldown">row</option>
+      </table>
+    </panel>
+  </row>
+
+
+</form>
